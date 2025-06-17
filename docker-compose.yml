@@ -1,88 +1,183 @@
 version: '3.8'
 
 services:
-  wg-easy:
-    image: weejewel/wg-easy:latest
-    container_name: erik-vpn
+  # 3X-UI Panel with Xray-core
+  xray-ui:
+    image: ghcr.io/mhsanaei/3x-ui:latest
+    container_name: erik-vpn-3x-ui
     restart: unless-stopped
-    ports:
-      - "51820:51820/udp"  # WireGuard port
-      - "51821:51821/tcp"  # Web UI port
     environment:
-      # Server configuration
-      - WG_HOST=${WG_HOST:-your-server-ip}
-      - PASSWORD=${ADMIN_PASSWORD:-admin123}
-      - WG_PORT=51820
-      - WG_DEFAULT_ADDRESS=10.8.0.x
-      - WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
-      - WG_ALLOWED_IPS=0.0.0.0/0
-
-      # Advanced settings
-      - WG_PRE_UP=echo 'Pre-up script'
-      - WG_POST_UP=iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-      - WG_PRE_DOWN=echo 'Pre-down script'
-      - WG_POST_DOWN=iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
-
-      # UI Settings
-      - LANG=ru
-      - UI_TRAFFIC_STATS=true
-      - UI_CHART_TYPE=2
-
+      # Panel configuration
+      - XRAY_VMESS_AEAD_FORCED=false
+      - XRAY_VER=latest
+    ports:
+      # Web panel port
+      - "${PANEL_PORT:-2053}:2053"
+      # Xray service ports
+      - "${VLESS_PORT:-443}:443"
+      - "${VMESS_PORT:-80}:80"
+      - "${TROJAN_PORT:-8443}:8443"
+      # Additional ports for different protocols
+      - "${VLESS_REALITY_PORT:-8080}:8080"
+      - "${SHADOWSOCKS_PORT:-9443}:9443"
     volumes:
-      - ./data:/etc/wireguard
-      - ./logs:/var/log/wireguard
+      # Persistent data
+      - ./data/3x-ui:/etc/x-ui
+      # SSL certificates
+      - ./certs:/etc/ssl/certs:ro
+      # Xray logs
+      - ./logs:/var/log/xray
+    networks:
+      - erik-vpn-network
+    sysctls:
+      # Network optimizations
+      - net.core.rmem_max=16777216
+      - net.core.wmem_max=16777216
+      - net.ipv4.tcp_rmem=4096 87380 16777216
+      - net.ipv4.tcp_wmem=4096 65536 16777216
+      - net.ipv4.tcp_congestion_control=${TCP_CONGESTION:-bbr}
     cap_add:
       - NET_ADMIN
-      - SYS_MODULE
-    sysctls:
-      - net.ipv4.ip_forward=1
-      - net.ipv4.conf.all.src_valid_mark=1
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2053/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Nginx proxy for SSL termination (optional)
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: erik-vpn-nginx
+    restart: unless-stopped
+    profiles:
+      - nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certs:/etc/ssl/certs:ro
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - erik-vpn-network
+    depends_on:
+      - xray-ui
+
+  # Watchtower for automatic updates
+  watchtower:
+    image: containrrr/watchtower
+    container_name: erik-vpn-watchtower
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 4 * * *
+      - WATCHTOWER_NOTIFICATIONS=slack
+      - WATCHTOWER_NOTIFICATION_SLACK_HOOK_URL=${SLACK_WEBHOOK_URL}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - erik-vpn-network
 
-  # Prometheus для мониторинга (опционально)
+  # Prometheus for monitoring
   prometheus:
     image: prom/prometheus:latest
     container_name: erik-vpn-prometheus
     restart: unless-stopped
+    profiles:
+      - monitoring
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=200h'
+      - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
     networks:
       - erik-vpn-network
-    profiles:
-      - monitoring
 
-  # Grafana для визуализации (опционально)
+  # Grafana for dashboards
   grafana:
     image: grafana/grafana:latest
     container_name: erik-vpn-grafana
     restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
-    networks:
-      - erik-vpn-network
     profiles:
       - monitoring
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - erik-vpn-network
+    depends_on:
+      - prometheus
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: erik-vpn-node-exporter
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - erik-vpn-network
+
+  # Fail2Ban for security
+  fail2ban:
+    image: crazymax/fail2ban:latest
+    container_name: erik-vpn-fail2ban
+    restart: unless-stopped
+    profiles:
+      - security
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./fail2ban:/data
+      - ./logs:/var/log:ro
+    environment:
+      - TZ=${TZ:-UTC}
+      - F2B_LOG_LEVEL=INFO
+      - F2B_DB_PURGE_AGE=30d
 
 volumes:
   prometheus-data:
+    driver: local
   grafana-data:
+    driver: local
 
 networks:
   erik-vpn-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

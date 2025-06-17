@@ -1,249 +1,434 @@
 #!/bin/bash
 
-# =================================================================
-# ERIK-VPN AUTOMATED DEPLOYMENT SCRIPT
-# =================================================================
-# Автоматическое развертывание VPN сервера одной командой
+# Erik-VPN Deployment Script
+# VLESS + Reality with 3X-UI Panel
+# Version: 2.0
 
-set -e
+set -euo pipefail
 
-# Цвета для вывода
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Функция для вывода цветного текста
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+# Script configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+LOG_FILE="$PROJECT_DIR/logs/deploy.log"
+
+# Create logs directory
+mkdir -p "$PROJECT_DIR/logs"
+
+# Logging function
+log() {
+    echo -e "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
 
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+print_banner() {
+    echo -e "${PURPLE}"
+    cat << 'EOF'
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║                       ERIK-VPN v2.0                         ║
+║                   VLESS + Reality Setup                     ║
+║                                                              ║
+║    🛡️  Максимальная стойкость к блокировкам                 ║
+║    🚀  Высокая скорость подключения                         ║
+║    🎛️  Удобная панель управления 3X-UI                     ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+EOF
+    echo -e "${NC}"
 }
 
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-# Проверка прав суперпользователя
+# Check if running as root
 check_root() {
     if [[ $EUID -eq 0 ]]; then
-        print_warning "Скрипт запущен от имени root. Рекомендуется использовать sudo."
-    fi
-}
-
-# Определение ОС
-detect_os() {
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        OS=$NAME
-        VER=$VERSION_ID
-    else
-        print_error "Не удалось определить операционную систему"
+        log "${RED}⚠️  Не запускайте скрипт под root! Используйте обычного пользователя с sudo.${NC}"
         exit 1
     fi
-    print_status "Обнаружена ОС: $OS $VER"
 }
 
-# Установка Docker
-install_docker() {
-    if command -v docker &> /dev/null; then
-        print_success "Docker уже установлен"
-        return
+# Detect OS
+detect_os() {
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        if command -v apt >/dev/null 2>&1; then
+            OS="ubuntu"
+            PACKAGE_MANAGER="apt"
+        elif command -v yum >/dev/null 2>&1; then
+            OS="centos"
+            PACKAGE_MANAGER="yum"
+        elif command -v dnf >/dev/null 2>&1; then
+            OS="fedora"
+            PACKAGE_MANAGER="dnf"
+        else
+            log "${RED}❌ Неподдерживаемая Linux система${NC}"
+            exit 1
+        fi
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        OS="macos"
+        PACKAGE_MANAGER="brew"
+    else
+        log "${RED}❌ Неподдерживаемая операционная система: $OSTYPE${NC}"
+        exit 1
     fi
 
-    print_status "Установка Docker..."
+    log "${GREEN}✅ Обнаружена ОС: $OS${NC}"
+}
 
-    case "$OS" in
-        "Ubuntu"|"Debian GNU/Linux")
+# Check system requirements
+check_requirements() {
+    log "${BLUE}🔍 Проверка системных требований...${NC}"
+
+    # Check memory
+    if [[ "$OS" != "macos" ]]; then
+        total_mem=$(free -m | awk 'NR==2{printf "%.0f", $2}')
+        if [ "$total_mem" -lt 512 ]; then
+            log "${YELLOW}⚠️  Предупреждение: Рекомендуется минимум 512MB RAM (обнаружено: ${total_mem}MB)${NC}"
+        fi
+    fi
+
+    # Check disk space
+    available_space=$(df "$PROJECT_DIR" | awk 'NR==2 {print $4}')
+    if [ "$available_space" -lt 1048576 ]; then  # 1GB in KB
+        log "${YELLOW}⚠️  Предупреждение: Рекомендуется минимум 1GB свободного места${NC}"
+    fi
+
+    log "${GREEN}✅ Системные требования проверены${NC}"
+}
+
+# Install Docker and Docker Compose
+install_docker() {
+    if command -v docker >/dev/null 2>&1 && command -v docker-compose >/dev/null 2>&1; then
+        log "${GREEN}✅ Docker уже установлен${NC}"
+        return 0
+    fi
+
+    log "${BLUE}🐳 Установка Docker...${NC}"
+
+    case $OS in
+        ubuntu)
+            # Remove old versions
+            sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+            # Update packages
             sudo apt-get update
-            sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
-            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            sudo apt-get install -y ca-certificates curl gnupg lsb-release
+
+            # Add Docker GPG key
+            sudo mkdir -p /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+            # Add Docker repository
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+            # Install Docker
             sudo apt-get update
-            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+            # Add user to docker group
+            sudo usermod -aG docker "$USER"
             ;;
-        "CentOS Linux"|"Red Hat Enterprise Linux")
-            sudo yum install -y yum-utils
+        centos|fedora)
+            # Remove old versions
+            sudo $PACKAGE_MANAGER remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine 2>/dev/null || true
+
+            # Install required packages
+            sudo $PACKAGE_MANAGER install -y yum-utils
+
+            # Add Docker repository
             sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-            sudo yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+            # Install Docker
+            sudo $PACKAGE_MANAGER install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+            # Enable and start Docker
+            sudo systemctl enable docker
+            sudo systemctl start docker
+
+            # Add user to docker group
+            sudo usermod -aG docker "$USER"
             ;;
-        *)
-            print_error "Неподдерживаемая ОС: $OS"
-            print_status "Попробуйте установить Docker вручную: https://docs.docker.com/get-docker/"
-            exit 1
+        macos)
+            if ! command -v brew >/dev/null 2>&1; then
+                log "${RED}❌ Homebrew не установлен. Установите его с https://brew.sh/${NC}"
+                exit 1
+            fi
+
+            # Install Docker Desktop for Mac
+            brew install --cask docker
+            log "${YELLOW}⚠️  Запустите Docker Desktop и дождитесь его полной загрузки${NC}"
             ;;
     esac
 
-    sudo systemctl start docker
-    sudo systemctl enable docker
-    sudo usermod -aG docker $USER
-
-    print_success "Docker установлен успешно"
+    log "${GREEN}✅ Docker установлен${NC}"
 }
 
-# Установка Docker Compose (если нет)
-install_docker_compose() {
-    if command -v docker-compose &> /dev/null; then
-        print_success "Docker Compose уже установлен"
-        return
-    fi
+# Setup directories
+setup_directories() {
+    log "${BLUE}📁 Создание структуры каталогов...${NC}"
 
-    print_status "Установка Docker Compose..."
-    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    sudo chmod +x /usr/local/bin/docker-compose
-    print_success "Docker Compose установлен"
+    cd "$PROJECT_DIR"
+
+    # Create necessary directories
+    directories=(
+        "data/3x-ui"
+        "certs"
+        "logs/xray"
+        "logs/nginx"
+        "nginx/conf.d"
+        "monitoring"
+        "monitoring/grafana/dashboards"
+        "monitoring/grafana/datasources"
+        "fail2ban"
+    )
+
+    for dir in "${directories[@]}"; do
+        mkdir -p "$dir"
+        log "📁 Создан каталог: $dir"
+    done
+
+    # Set proper permissions
+    chmod 755 data/3x-ui
+    chmod 755 logs
+
+    log "${GREEN}✅ Структура каталогов создана${NC}"
 }
 
-# Получение внешнего IP
-get_external_ip() {
-    EXTERNAL_IP=$(curl -s http://ipv4.icanhazip.com 2>/dev/null || curl -s http://checkip.amazonaws.com 2>/dev/null || echo "")
-    if [[ -z "$EXTERNAL_IP" ]]; then
-        print_warning "Не удалось автоматически определить внешний IP"
-        read -p "Введите IP-адрес или домен вашего сервера: " EXTERNAL_IP
-    else
-        print_status "Обнаружен внешний IP: $EXTERNAL_IP"
-        read -p "Использовать этот IP? (y/n) [y]: " -r confirm
-        confirm=${confirm:-y}
-        if [[ ! $confirm =~ ^[Yy]$ ]]; then
-            read -p "Введите IP-адрес или домен вашего сервера: " EXTERNAL_IP
+# Generate configuration files
+generate_configs() {
+    log "${BLUE}⚙️  Создание конфигурационных файлов...${NC}"
+
+    cd "$PROJECT_DIR"
+
+    # Copy environment file if it doesn't exist
+    if [ ! -f .env ]; then
+        if [ -f env.example ]; then
+            cp env.example .env
+            log "📄 Создан файл .env из env.example"
+        else
+            log "${RED}❌ Файл env.example не найден${NC}"
+            exit 1
         fi
     fi
-}
 
-# Настройка конфигурации
-setup_config() {
-    print_status "Настройка конфигурации..."
+    # Generate random passwords and secrets
+    if command -v openssl >/dev/null 2>&1; then
+        ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -d "=+/")
+        SESSION_SECRET=$(openssl rand -hex 32)
+        GRAFANA_PASSWORD=$(openssl rand -base64 12 | tr -d "=+/")
 
-    if [[ ! -f .env ]]; then
-        cp env.example .env
-        print_status "Создан файл .env из примера"
+        # Update .env file with generated values
+        sed -i.bak "s/your-secure-password-here/$ADMIN_PASSWORD/" .env
+        sed -i.bak "s/your-random-session-secret-here/$SESSION_SECRET/" .env
+        sed -i.bak "s/grafana-admin-password/$GRAFANA_PASSWORD/" .env
+
+        log "${GREEN}✅ Сгенерированы случайные пароли${NC}"
+        log "${YELLOW}📋 Сохраните эти учетные данные:${NC}"
+        log "${CYAN}   Администратор 3X-UI: admin / $ADMIN_PASSWORD${NC}"
+        log "${CYAN}   Администратор Grafana: admin / $GRAFANA_PASSWORD${NC}"
     fi
 
-    # Обновление IP в конфигурации
-    sed -i "s/WG_HOST=your-server-ip/WG_HOST=$EXTERNAL_IP/g" .env
+    # Create basic nginx config
+    cat > nginx/nginx.conf << 'EOF'
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
 
-    # Генерация случайного пароля для админ-панели
-    ADMIN_PASSWORD=$(openssl rand -base64 12 2>/dev/null || head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)
-    sed -i "s/ADMIN_PASSWORD=your-secure-password/ADMIN_PASSWORD=$ADMIN_PASSWORD/g" .env
-
-    print_success "Конфигурация настроена"
-    print_status "Пароль для веб-интерфейса: $ADMIN_PASSWORD"
+events {
+    worker_connections 1024;
 }
 
-# Создание необходимых папок
-create_directories() {
-    print_status "Создание директорий..."
-    mkdir -p data logs monitoring/grafana/provisioning
-    sudo chown -R $USER:$USER data logs
-    print_success "Директории созданы"
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+
+    include /etc/nginx/conf.d/*.conf;
+}
+EOF
+
+    log "${GREEN}✅ Конфигурационные файлы созданы${NC}"
 }
 
-# Настройка файрвола
-configure_firewall() {
-    print_status "Настройка файрвола..."
+# Detect server IP
+detect_server_ip() {
+    log "${BLUE}🌐 Определение IP-адреса сервера...${NC}"
 
-    if command -v ufw &> /dev/null; then
-        sudo ufw allow 51820/udp comment "WireGuard"
-        sudo ufw allow 51821/tcp comment "WireGuard Web UI"
-        print_success "UFW настроен"
-    elif command -v firewall-cmd &> /dev/null; then
-        sudo firewall-cmd --permanent --add-port=51820/udp
-        sudo firewall-cmd --permanent --add-port=51821/tcp
-        sudo firewall-cmd --reload
-        print_success "Firewalld настроен"
+    # Try different methods to get public IP
+    SERVER_IP=""
+
+    # Method 1: ip route (for local development)
+    if [[ -z "$SERVER_IP" ]]; then
+        SERVER_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $(NF-2); exit}' 2>/dev/null || true)
+    fi
+
+    # Method 2: hostname -I (fallback)
+    if [[ -z "$SERVER_IP" ]]; then
+        SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    fi
+
+    # Method 3: ifconfig (fallback)
+    if [[ -z "$SERVER_IP" ]] && command -v ifconfig >/dev/null 2>&1; then
+        SERVER_IP=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | head -1)
+    fi
+
+    if [[ -n "$SERVER_IP" ]]; then
+        # Update .env file with detected IP
+        sed -i.bak "s/your-server-ip-or-domain.com/$SERVER_IP/" .env
+        log "${GREEN}✅ Обнаружен IP-адрес: $SERVER_IP${NC}"
     else
-        print_warning "Файрвол не обнаружен. Убедитесь, что порты 51820/udp и 51821/tcp открыты"
+        log "${YELLOW}⚠️  Не удалось автоматически определить IP. Укажите его вручную в файле .env${NC}"
     fi
 }
 
-# Включение IP forwarding
-enable_ip_forwarding() {
-    print_status "Включение IP forwarding..."
-    echo 'net.ipv4.ip_forward=1' | sudo tee -a /etc/sysctl.conf
-    sudo sysctl -p
-    print_success "IP forwarding включен"
-}
+# Start services
+start_services() {
+    log "${BLUE}🚀 Запуск Erik-VPN сервисов...${NC}"
 
-# Запуск контейнеров
-start_containers() {
-    print_status "Запуск VPN сервера..."
-    docker-compose up -d
-    print_success "VPN сервер запущен!"
-}
+    cd "$PROJECT_DIR"
 
-# Проверка статуса
-check_status() {
-    print_status "Проверка статуса..."
-    sleep 5
+    # Pull latest images
+    docker-compose pull
 
-    if docker ps | grep -q erik-vpn; then
-        print_success "Контейнер erik-vpn работает"
+    # Start services
+    docker-compose up -d xray-ui
+
+    # Wait for services to start
+    log "${BLUE}⏳ Ожидание запуска сервисов (30 секунд)...${NC}"
+    sleep 30
+
+    # Check if services are running
+    if docker-compose ps | grep -q "Up"; then
+        log "${GREEN}✅ Сервисы Erik-VPN успешно запущены${NC}"
     else
-        print_error "Проблема с запуском контейнера"
+        log "${RED}❌ Ошибка при запуске сервисов${NC}"
         docker-compose logs
         exit 1
     fi
 }
 
-# Показ итоговой информации
-show_final_info() {
-    print_success "🎉 Развертывание завершено успешно!"
-    echo
-    echo "==================================================================="
-    echo "📋 ИНФОРМАЦИЯ О ВАШЕМ VPN СЕРВЕРЕ"
-    echo "==================================================================="
-    echo "🌐 Веб-интерфейс: http://$EXTERNAL_IP:51821"
-    echo "🔑 Пароль админа: $ADMIN_PASSWORD"
-    echo "🔌 WireGuard порт: 51820/udp"
-    echo "📊 Веб-интерфейс порт: 51821/tcp"
-    echo
-    echo "==================================================================="
-    echo "📱 СЛЕДУЮЩИЕ ШАГИ"
-    echo "==================================================================="
-    echo "1. Откройте веб-интерфейс в браузере"
-    echo "2. Войдите с паролем: $ADMIN_PASSWORD"
-    echo "3. Создайте новых пользователей"
-    echo "4. Скачайте конфигурации для устройств"
-    echo "5. Установите WireGuard клиенты на устройства"
-    echo
-    echo "==================================================================="
-    echo "📚 ПОЛЕЗНЫЕ КОМАНДЫ"
-    echo "==================================================================="
-    echo "• Просмотр логов: docker-compose logs -f"
-    echo "• Остановка сервера: docker-compose down"
-    echo "• Запуск сервера: docker-compose up -d"
-    echo "• Перезапуск: docker-compose restart"
-    echo
-    print_warning "Сохраните пароль администратора в безопасном месте!"
+# Setup firewall rules
+setup_firewall() {
+    if [[ "$OS" == "macos" ]]; then
+        log "${YELLOW}⚠️  macOS: Настройка брандмауэра пропущена${NC}"
+        return 0
+    fi
+
+    log "${BLUE}🔥 Настройка брандмауэра...${NC}"
+
+    # Install and configure UFW (Ubuntu/Debian)
+    if command -v ufw >/dev/null 2>&1; then
+        sudo ufw --force enable
+        sudo ufw default deny incoming
+        sudo ufw default allow outgoing
+
+        # Allow SSH
+        sudo ufw allow ssh
+
+        # Allow 3X-UI panel
+        sudo ufw allow 2053/tcp comment "3X-UI Panel"
+
+        # Allow Xray ports
+        sudo ufw allow 443/tcp comment "VLESS Reality"
+        sudo ufw allow 80/tcp comment "VMess"
+        sudo ufw allow 8080/tcp comment "VLESS Reality Alt"
+        sudo ufw allow 8443/tcp comment "Trojan"
+
+        log "${GREEN}✅ UFW настроен${NC}"
+
+    # Configure firewalld (CentOS/RHEL/Fedora)
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+        sudo systemctl enable firewalld
+        sudo systemctl start firewalld
+
+        # Allow services
+        sudo firewall-cmd --permanent --add-service=ssh
+        sudo firewall-cmd --permanent --add-port=2053/tcp
+        sudo firewall-cmd --permanent --add-port=443/tcp
+        sudo firewall-cmd --permanent --add-port=80/tcp
+        sudo firewall-cmd --permanent --add-port=8080/tcp
+        sudo firewall-cmd --permanent --add-port=8443/tcp
+
+        sudo firewall-cmd --reload
+
+        log "${GREEN}✅ Firewalld настроен${NC}"
+    else
+        log "${YELLOW}⚠️  Брандмауэр не обнаружен. Настройте вручную порты: 2053, 443, 80, 8080, 8443${NC}"
+    fi
 }
 
-# Основная функция
-main() {
-    echo "==================================================================="
-    echo "🚀 ERIK-VPN AUTOMATIC DEPLOYMENT"
-    echo "==================================================================="
+# Print final information
+print_final_info() {
+    log "${GREEN}🎉 Erik-VPN успешно развернут!${NC}"
     echo
+    echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${PURPLE}║                    ИНФОРМАЦИЯ О ДОСТУПЕ                     ║${NC}"
+    echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "${CYAN}🎛️  Панель управления 3X-UI:${NC}"
+    echo -e "   URL: ${GREEN}http://$SERVER_IP:2053${NC}"
+    echo -e "   Логин: ${GREEN}admin${NC}"
+    echo -e "   Пароль: ${GREEN}$(grep ADMIN_PASSWORD .env | cut -d'=' -f2)${NC}"
+    echo
+    echo -e "${CYAN}📱 Поддерживаемые клиенты:${NC}"
+    echo -e "   Android: ${GREEN}Hiddify, v2rayNG, Fair VPN${NC}"
+    echo -e "   iOS: ${GREEN}FoXray, Shadowrocket, Hiddify${NC}"
+    echo -e "   Windows: ${GREEN}Hiddify, v2rayN, Qv2ray${NC}"
+    echo -e "   macOS: ${GREEN}Hiddify, ClashX Pro, Qv2ray${NC}"
+    echo -e "   Linux: ${GREEN}Hiddify, v2ray/Xray-core${NC}"
+    echo
+    echo -e "${CYAN}🔧 Полезные команды:${NC}"
+    echo -e "   Перезапуск: ${GREEN}docker-compose restart${NC}"
+    echo -e "   Логи: ${GREEN}docker-compose logs -f${NC}"
+    echo -e "   Остановка: ${GREEN}docker-compose down${NC}"
+    echo -e "   Обновление: ${GREEN}docker-compose pull && docker-compose up -d${NC}"
+    echo
+    echo -e "${YELLOW}⚠️  Следующие шаги:${NC}"
+    echo -e "   1. Войдите в панель управления 3X-UI"
+    echo -e "   2. Создайте конфигурацию VLESS + Reality"
+    echo -e "   3. Настройте клиентские приложения"
+    echo -e "   4. Проверьте подключение"
+    echo
+    echo -e "${PURPLE}📖 Документация: ${GREEN}./docs/${NC}"
+    echo -e "${PURPLE}🐛 Логи развертывания: ${GREEN}$LOG_FILE${NC}"
+    echo
+}
+
+# Main function
+main() {
+    print_banner
+
+    log "${BLUE}🚀 Начало развертывания Erik-VPN...${NC}"
 
     check_root
     detect_os
+    check_requirements
     install_docker
-    install_docker_compose
-    get_external_ip
-    setup_config
-    create_directories
-    configure_firewall
-    enable_ip_forwarding
-    start_containers
-    check_status
-    show_final_info
+    setup_directories
+    generate_configs
+    detect_server_ip
+    start_services
+    setup_firewall
+    print_final_info
+
+    log "${GREEN}✅ Развертывание Erik-VPN завершено успешно!${NC}"
 }
 
-# Запуск скрипта
+# Run main function
 main "$@"
