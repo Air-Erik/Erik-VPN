@@ -1,332 +1,339 @@
-# 🛠️ Подробная инструкция по установке Erik-VPN
+# Установка Erik-VPN с VLESS + Reality
 
-Этот гайд поможет вам развернуть собственный VPN сервер на базе WireGuard с веб-интерфейсом для управления пользователями.
+Подробное руководство по установке и настройке Erik-VPN с протоколом VLESS + Reality и панелью управления 3X-UI.
 
-## 📋 Требования
+## 🚀 Быстрая установка
 
-### Минимальные системные требования:
-- **CPU**: 1 ядро (x86_64 или ARM64)
-- **RAM**: 512MB (рекомендуется 1GB+)
-- **Диск**: 2GB свободного места
-- **Сеть**: Статический публичный IP-адрес
-
-### Поддерживаемые операционные системы:
-- Ubuntu 20.04+ / Debian 11+
-- CentOS 8+ / RHEL 8+
-- Rocky Linux 8+
-- Fedora 35+
-
-## 🚀 Автоматическая установка (Рекомендуется)
-
-### Шаг 1: Подготовка сервера
+### Автоматическая установка (рекомендуется)
 
 ```bash
-# Обновление системы
-sudo apt update && sudo apt upgrade -y  # для Ubuntu/Debian
-# или
-sudo yum update -y  # для CentOS/RHEL
-
-# Клонирование репозитория
+# Клонируйте репозиторий
 git clone https://github.com/your-username/Erik-VPN.git
 cd Erik-VPN
 
-# Делаем скрипт исполняемым
-chmod +x scripts/deploy.sh
-```
-
-### Шаг 2: Запуск автоматической установки
-
-```bash
-# Запуск скрипта развертывания
+# Запустите скрипт установки
 ./scripts/deploy.sh
 ```
 
 Скрипт автоматически:
+- Определит вашу операционную систему
 - Установит Docker и Docker Compose
-- Определит ваш внешний IP-адрес
-- Настроит конфигурацию
-- Создаст необходимые директории
-- Настроит файрвол
-- Запустит VPN сервер
+- Создаст необходимые каталоги
+- Сгенерирует безопасные пароли
+- Настроит брандмауэр
+- Запустит сервисы
 
-### Шаг 3: Первый вход
+### Ручная установка
 
-После завершения установки:
+Если вы предпочитаете ручную настройку или автоматический скрипт не работает:
 
-1. Откройте браузер и перейдите по адресу: `http://YOUR-SERVER-IP:51821`
-2. Введите пароль администратора (будет показан в конце установки)
-3. Создайте первого пользователя через веб-интерфейс
+#### 1. Установка Docker
 
-## ⚙️ Ручная установка
-
-Если автоматическая установка не подходит, используйте ручную настройку:
-
-### Шаг 1: Установка Docker
-
-#### Ubuntu/Debian:
+**Ubuntu/Debian:**
 ```bash
-# Удаление старых версий Docker
+# Удалите старые версии
 sudo apt-get remove docker docker-engine docker.io containerd runc
 
-# Установка зависимостей
+# Обновите пакеты
 sudo apt-get update
-sudo apt-get install apt-transport-https ca-certificates curl gnupg lsb-release
+sudo apt-get install ca-certificates curl gnupg lsb-release
 
-# Добавление GPG ключа Docker
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+# Добавьте GPG ключ Docker
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+  sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
-# Добавление репозитория Docker
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+# Добавьте репозиторий Docker
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# Установка Docker
+# Установите Docker
 sudo apt-get update
-sudo apt-get install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# Запуск и автозагрузка Docker
-sudo systemctl start docker
-sudo systemctl enable docker
-
-# Добавление пользователя в группу docker
+# Добавьте пользователя в группу docker
 sudo usermod -aG docker $USER
 ```
 
-#### CentOS/RHEL:
+**CentOS/RHEL/Fedora:**
 ```bash
-# Установка зависимостей
+# Удалите старые версии
+sudo yum remove docker docker-client docker-client-latest docker-common \
+  docker-latest docker-latest-logrotate docker-logrotate docker-engine
+
+# Установите необходимые пакеты
 sudo yum install -y yum-utils
 
-# Добавление репозитория Docker
-sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+# Добавьте репозиторий Docker
+sudo yum-config-manager --add-repo \
+  https://download.docker.com/linux/centos/docker-ce.repo
 
-# Установка Docker
-sudo yum install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+# Установите Docker
+sudo yum install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# Запуск и автозагрузка Docker
-sudo systemctl start docker
+# Запустите Docker
 sudo systemctl enable docker
-
-# Добавление пользователя в группу docker
+sudo systemctl start docker
 sudo usermod -aG docker $USER
 ```
 
-### Шаг 2: Установка Docker Compose (если необходимо)
+#### 2. Настройка проекта
 
 ```bash
-# Скачивание Docker Compose
-sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+# Создайте структуру каталогов
+mkdir -p data/3x-ui certs logs/{xray,nginx} nginx/conf.d monitoring fail2ban
 
-# Установка прав на выполнение
-sudo chmod +x /usr/local/bin/docker-compose
-
-# Проверка установки
-docker-compose --version
-```
-
-### Шаг 3: Настройка конфигурации
-
-```bash
-# Копирование примера конфигурации
+# Скопируйте файл конфигурации
 cp env.example .env
 
-# Редактирование конфигурации
+# Отредактируйте конфигурацию
 nano .env
 ```
 
-**Обязательные параметры для изменения:**
-- `WG_HOST` - ваш внешний IP или домен
-- `ADMIN_PASSWORD` - пароль для веб-интерфейса
-
-### Шаг 4: Настройка системы
+#### 3. Запуск сервисов
 
 ```bash
-# Включение IP forwarding
-echo 'net.ipv4.ip_forward=1' | sudo tee -a /etc/sysctl.conf
+# Запустите Erik-VPN
+docker-compose up -d
+
+# Проверьте статус
+docker-compose ps
+
+# Просмотрите логи
+docker-compose logs -f xray-ui
+```
+
+## 🛠️ Настройка 3X-UI панели
+
+### Первоначальная настройка
+
+1. **Доступ к панели**: Откройте `http://your-server-ip:2053` в браузере
+2. **Вход в систему**:
+   - Логин: `admin`
+   - Пароль: указан в файле `.env` (переменная `ADMIN_PASSWORD`)
+
+### Создание пользователя VLESS + Reality
+
+1. **Перейдите в раздел "Inbounds"**
+2. **Нажмите "+" для добавления нового inbound**
+3. **Заполните параметры**:
+   ```
+   Remark: VLESS-Reality-User1
+   Protocol: VLESS
+   Listen IP: 0.0.0.0
+   Port: 443
+   ```
+
+4. **Настройте XTLS-Reality**:
+   ```
+   Flow: xtls-rprx-vision
+   uTLS: chrome
+   Dest: microsoft.com:443
+   Server Names: microsoft.com
+   ```
+
+5. **Добавьте клиента**:
+   ```
+   ID: (генерируется автоматически)
+   Flow: xtls-rprx-vision
+   Email: user1@example.com
+   ```
+
+6. **Сохраните конфигурацию**
+
+### Популярные сайты для маскировки Reality
+
+| Сайт | Причина выбора |
+|------|----------------|
+| `microsoft.com` | Высокий трафик, стабильные сертификаты |
+| `apple.com` | Популярный, надежный SSL |
+| `cloudflare.com` | CDN провайдер, много подключений |
+| `github.com` | Разработчики, техническая аудитория |
+| `aws.amazon.com` | Облачные сервисы, B2B трафик |
+
+## 🔧 Дополнительные настройки
+
+### Оптимизация производительности
+
+**Системные параметры:**
+```bash
+# Добавьте в /etc/sysctl.conf
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.ipv4.tcp_congestion_control = bbr
+
+# Примените изменения
 sudo sysctl -p
-
-# Создание директорий
-mkdir -p data logs monitoring/grafana/provisioning
 ```
 
-### Шаг 5: Настройка файрвола
-
-#### UFW (Ubuntu):
-```bash
-sudo ufw allow 51820/udp comment "WireGuard"
-sudo ufw allow 51821/tcp comment "WireGuard Web UI"
-sudo ufw reload
+**Docker оптимизации:**
+```yaml
+# В docker-compose.yml
+sysctls:
+  - net.core.rmem_max=16777216
+  - net.core.wmem_max=16777216
+  - net.ipv4.tcp_congestion_control=bbr
 ```
 
-#### Firewalld (CentOS/RHEL):
+### SSL сертификаты
+
+**Самоподписанные сертификаты:**
 ```bash
-sudo firewall-cmd --permanent --add-port=51820/udp
-sudo firewall-cmd --permanent --add-port=51821/tcp
+# Создайте самоподписанный сертификат
+mkdir -p certs
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout certs/key.pem \
+  -out certs/cert.pem \
+  -subj "/C=US/ST=State/L=City/O=Organization/CN=yourdomain.com"
+```
+
+**Let's Encrypt (для продакшена):**
+```bash
+# Установите certbot
+sudo apt-get install certbot
+
+# Получите сертификат
+sudo certbot certonly --standalone -d yourdomain.com
+
+# Скопируйте сертификаты
+sudo cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem certs/cert.pem
+sudo cp /etc/letsencrypt/live/yourdomain.com/privkey.pem certs/key.pem
+sudo chown $USER:$USER certs/*.pem
+```
+
+### Настройка брандмауэра
+
+**UFW (Ubuntu/Debian):**
+```bash
+sudo ufw enable
+sudo ufw allow ssh
+sudo ufw allow 2053/tcp comment "3X-UI Panel"
+sudo ufw allow 443/tcp comment "VLESS Reality"
+sudo ufw allow 80/tcp comment "VMess"
+sudo ufw allow 8080/tcp comment "VLESS Alt"
+```
+
+**Firewalld (CentOS/RHEL):**
+```bash
+sudo firewall-cmd --permanent --add-service=ssh
+sudo firewall-cmd --permanent --add-port=2053/tcp
+sudo firewall-cmd --permanent --add-port=443/tcp
+sudo firewall-cmd --permanent --add-port=80/tcp
+sudo firewall-cmd --permanent --add-port=8080/tcp
 sudo firewall-cmd --reload
 ```
 
-#### Iptables (универсальный):
+## 📊 Мониторинг (опционально)
+
+### Включение мониторинга
+
 ```bash
-sudo iptables -A INPUT -p udp --dport 51820 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 51821 -j ACCEPT
-sudo iptables-save | sudo tee /etc/iptables/rules.v4
+# Запустите с профилем мониторинга
+docker-compose --profile monitoring up -d
+
+# Доступ к сервисам
+# Prometheus: http://your-server:9090
+# Grafana: http://your-server:3000
 ```
 
-### Шаг 6: Запуск сервера
+### Настройка Grafana
+
+1. **Войдите в Grafana**:
+   - URL: `http://your-server:3000`
+   - Логин: `admin`
+   - Пароль: указан в `.env` (переменная `GRAFANA_PASSWORD`)
+
+2. **Добавьте источник данных Prometheus**:
+   - URL: `http://prometheus:9090`
+   - Сохраните и протестируйте
+
+3. **Импортируйте готовые дашборды**:
+   - Node Exporter Full: ID `1860`
+   - Docker Container Metrics: ID `193`
+
+## 🔒 Безопасность
+
+### Fail2Ban (опционально)
 
 ```bash
-# Запуск контейнеров
-docker-compose up -d
+# Включите Fail2Ban
+docker-compose --profile security up -d fail2ban
 
-# Проверка статуса
-docker-compose ps
-docker-compose logs
+# Проверьте статус
+docker-compose exec fail2ban fail2ban-client status
 ```
 
-## 🔧 Настройка провайдера VPS
-
-### DigitalOcean
-
-1. Создайте Droplet с Ubuntu 22.04
-2. Откройте порты 51820/udp и 51821/tcp в файрволе
-3. Подключитесь по SSH и следуйте инструкции
-
-### AWS EC2
-
-1. Запустите EC2 instance с Ubuntu 22.04
-2. В Security Groups добавьте правила:
-   - Custom UDP Rule, Port 51820, Source 0.0.0.0/0
-   - Custom TCP Rule, Port 51821, Source 0.0.0.0/0
-3. Подключитесь по SSH и следуйте инструкции
-
-### Vultr
-
-1. Создайте сервер с Ubuntu 22.04
-2. В настройках файрвола добавьте правила для портов 51820/udp и 51821/tcp
-3. Подключитесь по SSH и следуйте инструкции
-
-### Hetzner
-
-1. Создайте Cloud Server с Ubuntu 22.04
-2. В настройках сети откройте необходимые порты
-3. Подключитесь по SSH и следуйте инструкции
-
-## 🐳 Альтернативные способы установки
-
-### Docker без Compose
+### Регулярные обновления
 
 ```bash
-# Создание сети
-docker network create erik-vpn-network
-
-# Запуск контейнера
-docker run -d \
-  --name erik-vpn \
-  --restart unless-stopped \
-  --cap-add NET_ADMIN \
-  --cap-add SYS_MODULE \
-  --sysctl net.ipv4.ip_forward=1 \
-  --sysctl net.ipv4.conf.all.src_valid_mark=1 \
-  -e WG_HOST=YOUR-SERVER-IP \
-  -e PASSWORD=YOUR-ADMIN-PASSWORD \
-  -p 51820:51820/udp \
-  -p 51821:51821/tcp \
-  -v $(pwd)/data:/etc/wireguard \
-  --network erik-vpn-network \
-  weejewel/wg-easy:latest
-```
-
-### Portainer (веб-интерфейс для Docker)
-
-```bash
-# Установка Portainer
-docker volume create portainer_data
-docker run -d -p 9000:9000 --name portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data portainer/portainer-ce:latest
-```
-
-## ✅ Проверка установки
-
-### Проверка статуса контейнеров:
-```bash
-docker-compose ps
-```
-
-### Проверка логов:
-```bash
-docker-compose logs -f
-```
-
-### Проверка сетевых подключений:
-```bash
-sudo netstat -tulpn | grep :51820
-sudo netstat -tulpn | grep :51821
-```
-
-### Тест подключения:
-```bash
-curl -I http://localhost:51821
+# Создайте cron job для автоматических обновлений
+echo "0 4 * * * cd /path/to/Erik-VPN && docker-compose pull && docker-compose up -d" | crontab -
 ```
 
 ## 🚨 Устранение неполадок
 
-### Проблема: Контейнер не запускается
+### Проверка статуса сервисов
 
-**Решение:**
 ```bash
-# Проверка логов
+# Статус контейнеров
+docker-compose ps
+
+# Логи всех сервисов
 docker-compose logs
 
-# Проверка системных требований
-sudo modprobe wireguard
-lsmod | grep wireguard
+# Логи конкретного сервиса
+docker-compose logs xray-ui
+
+# Использование ресурсов
+docker stats
 ```
 
-### Проблема: Веб-интерфейс недоступен
+### Общие проблемы
 
-**Решение:**
+**Проблема**: Панель 3X-UI недоступна
 ```bash
-# Проверка файрвола
+# Проверьте запущен ли контейнер
+docker-compose ps xray-ui
+
+# Проверьте порты
+netstat -tulpn | grep :2053
+
+# Проверьте логи
+docker-compose logs xray-ui
+```
+
+**Проблема**: Клиент не может подключиться
+```bash
+# Проверьте конфигурацию Reality
+docker-compose exec xray-ui xray version
+
+# Проверьте открыты ли порты
 sudo ufw status
 sudo iptables -L
-
-# Проверка портов
-sudo netstat -tulpn | grep :51821
 ```
 
-### Проблема: Клиенты не могут подключиться
-
-**Решение:**
+**Проблема**: Низкая скорость подключения
 ```bash
-# Проверка IP forwarding
-cat /proc/sys/net/ipv4/ip_forward
+# Проверьте системные параметры
+sysctl net.ipv4.tcp_congestion_control
 
-# Проверка NAT правил
-sudo iptables -t nat -L POSTROUTING
+# Проверьте нагрузку на систему
+htop
+iotop
 ```
 
-## 🔄 Обновление
+## 📱 Следующие шаги
 
-```bash
-# Остановка сервера
-docker-compose down
+После успешной установки:
 
-# Обновление образов
-docker-compose pull
+1. **[Настройка клиентов](client-setup.md)** - Подключение устройств
+2. **[VDS развертывание](vds-deployment.md)** - Развертывание на VDS
+3. **[Troubleshooting](troubleshooting.md)** - Решение проблем
+4. **[FAQ](faq.md)** - Часто задаваемые вопросы
 
-# Запуск с новыми образами
-docker-compose up -d
-```
+---
 
-## 🗑️ Удаление
-
-```bash
-# Полное удаление
-docker-compose down -v
-docker system prune -a
-sudo rm -rf data logs
-```
-
-## 🎯 Следующие шаги
-
-После успешной установки переходите к:
-- [Настройка сервера](server-setup.md)
-- [Настройка клиентов](client-setup.md)
-- [Безопасность](security.md)
+**⚠️ Важно**: Регулярно обновляйте пароли и следите за безопасностью вашего сервера!
