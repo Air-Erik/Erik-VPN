@@ -1,0 +1,159 @@
+version: '3.8'
+
+services:
+  # 3X-UI Panel with Xray-core (Windows version)
+  xray-ui:
+    image: ghcr.io/mhsanaei/3x-ui:latest
+    container_name: erik-vpn-3x-ui
+    restart: unless-stopped
+    environment:
+      # Panel configuration
+      - XRAY_VMESS_AEAD_FORCED=false
+      - XRAY_VER=latest
+    ports:
+      # Web panel port
+      - "${PANEL_PORT:-2053}:2053"
+      # Xray service ports
+      - "${VLESS_PORT:-443}:443"
+      - "${VMESS_PORT:-80}:80"
+      - "${TROJAN_PORT:-8443}:8443"
+      # Additional ports for different protocols
+      - "${VLESS_REALITY_PORT:-8080}:8080"
+      - "${SHADOWSOCKS_PORT:-9443}:9443"
+    volumes:
+      # Persistent data
+      - ./data/3x-ui:/etc/x-ui
+      # SSL certificates
+      - ./certs:/etc/ssl/certs:ro
+      # Xray logs
+      - ./logs:/var/log/xray
+    networks:
+      - erik-vpn-network
+    # Removed sysctls for Windows compatibility
+    # cap_add:
+    #   - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:2053 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Nginx proxy for SSL termination (optional)
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: erik-vpn-nginx
+    restart: unless-stopped
+    profiles:
+      - nginx
+    ports:
+      - "8080:80"
+      - "4443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certs:/etc/ssl/certs:ro
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - erik-vpn-network
+    depends_on:
+      - xray-ui
+
+  # Watchtower for automatic updates
+  watchtower:
+    image: containrrr/watchtower
+    container_name: erik-vpn-watchtower
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 4 * * *
+      - WATCHTOWER_NOTIFICATIONS=slack
+      - WATCHTOWER_NOTIFICATION_SLACK_HOOK_URL=${SLACK_WEBHOOK_URL}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - erik-vpn-network
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: erik-vpn-prometheus
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - erik-vpn-network
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: erik-vpn-grafana
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - erik-vpn-network
+    depends_on:
+      - prometheus
+
+  # Node Exporter for system metrics (Linux version for Windows)
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: erik-vpn-node-exporter
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    # Simplified volumes for Windows
+    # volumes:
+    #   - /proc:/host/proc:ro
+    #   - /sys:/host/sys:ro
+    #   - /:/rootfs:ro
+    command:
+      - '--web.listen-address=:9100'
+      - '--path.procfs=/proc'
+      - '--path.sysfs=/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - erik-vpn-network
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  erik-vpn-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

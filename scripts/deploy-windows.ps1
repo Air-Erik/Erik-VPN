@@ -263,13 +263,13 @@ function Start-Services {
         $dockerComposeCmd = "docker compose"
     }
 
-    # Pull latest images
+        # Pull latest images
     Write-ColoredOutput "📥 Загрузка Docker образов..." -Color "Cyan"
-    Invoke-Expression "$dockerComposeCmd pull xray-ui"
+    Invoke-Expression "$dockerComposeCmd -f docker-compose.windows.yml pull xray-ui"
 
     # Start services
     Write-ColoredOutput "▶️  Запуск контейнеров..." -Color "Cyan"
-    Invoke-Expression "$dockerComposeCmd up -d xray-ui"
+    Invoke-Expression "$dockerComposeCmd -f docker-compose.windows.yml up -d xray-ui"
 
     if ($LASTEXITCODE -eq 0) {
         Write-ColoredOutput "✅ Сервисы запущены успешно" -Color "Green"
@@ -323,9 +323,9 @@ function Show-FinalInfo {
     Write-ColoredOutput "   Windows: Hiddify, v2rayN, Qv2ray" -Color "Green"
     Write-ColoredOutput "" -Color "White"
     Write-ColoredOutput "🔧 Полезные команды:" -Color "Cyan"
-    Write-ColoredOutput "   Перезапуск: docker-compose restart" -Color "Green"
-    Write-ColoredOutput "   Логи: docker-compose logs -f" -Color "Green"
-    Write-ColoredOutput "   Остановка: docker-compose down" -Color "Green"
+    Write-ColoredOutput "   Перезапуск: docker-compose -f docker-compose.windows.yml restart" -Color "Green"
+    Write-ColoredOutput "   Логи: docker-compose -f docker-compose.windows.yml logs -f" -Color "Green"
+    Write-ColoredOutput "   Остановка: docker-compose -f docker-compose.windows.yml down" -Color "Green"
     Write-ColoredOutput "" -Color "White"
     Write-ColoredOutput "⚠️  Следующие шаги:" -Color "Yellow"
     Write-ColoredOutput "   1. Откройте браузер и перейдите к http://localhost:2053" -Color "White"
