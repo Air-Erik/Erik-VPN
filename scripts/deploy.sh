@@ -72,8 +72,14 @@ detect_os() {
     elif [[ "$OSTYPE" == "darwin"* ]]; then
         OS="macos"
         PACKAGE_MANAGER="brew"
+    elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ "$OSTYPE" == "win32" ]]; then
+        OS="windows"
+        PACKAGE_MANAGER="none"
+        log "${YELLOW}⚠️  Обнаружена Windows. Рекомендуется использовать PowerShell скрипт deploy-windows.ps1${NC}"
+        log "${YELLOW}⚠️  Либо запустить в WSL2 для полной совместимости${NC}"
     else
         log "${RED}❌ Неподдерживаемая операционная система: $OSTYPE${NC}"
+        log "${YELLOW}💡 Для Windows используйте: ./scripts/deploy-windows.ps1${NC}"
         exit 1
     fi
 
@@ -85,17 +91,23 @@ check_requirements() {
     log "${BLUE}🔍 Проверка системных требований...${NC}"
 
     # Check memory
-    if [[ "$OS" != "macos" ]]; then
+    if [[ "$OS" != "macos" ]] && [[ "$OS" != "windows" ]]; then
         total_mem=$(free -m | awk 'NR==2{printf "%.0f", $2}')
         if [ "$total_mem" -lt 512 ]; then
             log "${YELLOW}⚠️  Предупреждение: Рекомендуется минимум 512MB RAM (обнаружено: ${total_mem}MB)${NC}"
         fi
+    elif [[ "$OS" == "windows" ]]; then
+        log "${CYAN}💻 Windows обнаружена - убедитесь что у вас достаточно RAM (минимум 4GB для Docker Desktop)${NC}"
     fi
 
     # Check disk space
-    available_space=$(df "$PROJECT_DIR" | awk 'NR==2 {print $4}')
-    if [ "$available_space" -lt 1048576 ]; then  # 1GB in KB
-        log "${YELLOW}⚠️  Предупреждение: Рекомендуется минимум 1GB свободного места${NC}"
+    if [[ "$OS" != "windows" ]]; then
+        available_space=$(df "$PROJECT_DIR" | awk 'NR==2 {print $4}')
+        if [ "$available_space" -lt 1048576 ]; then  # 1GB in KB
+            log "${YELLOW}⚠️  Предупреждение: Рекомендуется минимум 1GB свободного места${NC}"
+        fi
+    else
+        log "${CYAN}💾 Убедитесь что у вас достаточно свободного места (минимум 5GB)${NC}"
     fi
 
     log "${GREEN}✅ Системные требования проверены${NC}"
@@ -162,6 +174,24 @@ install_docker() {
             # Install Docker Desktop for Mac
             brew install --cask docker
             log "${YELLOW}⚠️  Запустите Docker Desktop и дождитесь его полной загрузки${NC}"
+            ;;
+        windows)
+            log "${YELLOW}⚠️  Windows обнаружена. Проверка Docker...${NC}"
+            if ! command -v docker >/dev/null 2>&1; then
+                log "${RED}❌ Docker не найден. Установите Docker Desktop для Windows:${NC}"
+                log "${CYAN}   1. Скачайте с https://www.docker.com/products/docker-desktop${NC}"
+                log "${CYAN}   2. Установите и перезагрузите систему${NC}"
+                log "${CYAN}   3. Включите WSL2 backend${NC}"
+                log "${CYAN}   4. Перезапустите скрипт${NC}"
+                exit 1
+            fi
+
+            if ! docker info >/dev/null 2>&1; then
+                log "${RED}❌ Docker не запущен. Запустите Docker Desktop${NC}"
+                exit 1
+            fi
+
+            log "${GREEN}✅ Docker Desktop для Windows найден и запущен${NC}"
             ;;
     esac
 
@@ -273,27 +303,42 @@ detect_server_ip() {
     # Try different methods to get public IP
     SERVER_IP=""
 
-    # Method 1: ip route (for local development)
-    if [[ -z "$SERVER_IP" ]]; then
-        SERVER_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $(NF-2); exit}' 2>/dev/null || true)
-    fi
+    if [[ "$OS" == "windows" ]]; then
+        # For Windows, use localhost for local development
+        SERVER_IP="localhost"
+        log "${CYAN}💻 Windows: Используется localhost для локальной разработки${NC}"
+    else
+        # Method 1: ip route (for local development)
+        if [[ -z "$SERVER_IP" ]]; then
+            SERVER_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $(NF-2); exit}' 2>/dev/null || true)
+        fi
 
-    # Method 2: hostname -I (fallback)
-    if [[ -z "$SERVER_IP" ]]; then
-        SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-    fi
+        # Method 2: hostname -I (fallback)
+        if [[ -z "$SERVER_IP" ]]; then
+            SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+        fi
 
-    # Method 3: ifconfig (fallback)
-    if [[ -z "$SERVER_IP" ]] && command -v ifconfig >/dev/null 2>&1; then
-        SERVER_IP=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | head -1)
+        # Method 3: ifconfig (fallback)
+        if [[ -z "$SERVER_IP" ]] && command -v ifconfig >/dev/null 2>&1; then
+            SERVER_IP=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | head -1)
+        fi
     fi
 
     if [[ -n "$SERVER_IP" ]]; then
         # Update .env file with detected IP
-        sed -i.bak "s/your-server-ip-or-domain.com/$SERVER_IP/" .env
+        if command -v sed >/dev/null 2>&1; then
+            sed -i.bak "s/your-server-ip-or-domain.com/$SERVER_IP/" .env
+        else
+            # Fallback for systems without sed
+            cp .env .env.bak
+            cat .env.bak | while IFS= read -r line; do
+                echo "${line/your-server-ip-or-domain.com/$SERVER_IP}"
+            done > .env
+        fi
         log "${GREEN}✅ Обнаружен IP-адрес: $SERVER_IP${NC}"
     else
         log "${YELLOW}⚠️  Не удалось автоматически определить IP. Укажите его вручную в файле .env${NC}"
+        SERVER_IP="localhost"
     fi
 }
 
@@ -327,6 +372,12 @@ start_services() {
 setup_firewall() {
     if [[ "$OS" == "macos" ]]; then
         log "${YELLOW}⚠️  macOS: Настройка брандмауэра пропущена${NC}"
+        return 0
+    fi
+
+    if [[ "$OS" == "windows" ]]; then
+        log "${YELLOW}⚠️  Windows: Настройка брандмауэра пропущена${NC}"
+        log "${CYAN}💡 Для Windows настройте брандмауэр вручную или через Docker Desktop${NC}"
         return 0
     fi
 
