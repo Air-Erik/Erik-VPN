@@ -13,8 +13,10 @@ services:
       - XRAY_VER=latest
 
       # 3X-UI аутентификация
-      - XUI_USERNAME=${ADMIN_USERNAME:-admin}
-      - XUI_PASSWORD=${ADMIN_PASSWORD:-admin}
+      # Важно: не даём Compose тихо стартовать с дефолтами (admin/admin),
+      # если .env не подхватился или переменные не заданы.
+      - XUI_USERNAME=${ADMIN_USERNAME:?set ADMIN_USERNAME in .env}
+      - XUI_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
 
     ports:
       # Панель управления 3X-UI

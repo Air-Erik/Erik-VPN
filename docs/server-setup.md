@@ -244,6 +244,7 @@ docker compose logs -f
    ```
    http://YOUR_VPS_IP:2053
    ```
+   Если вы меняли порт в `.env` (`PANEL_PORT`) — используйте его вместо `2053`.
 
 3. Введите данные:
    ```
@@ -283,8 +284,10 @@ tcp6  0  0  :::8080   :::*  LISTEN  docker-proxy
 
 ### Проверка доступности панели:
 ```bash
-curl -I http://localhost:2053
+# если PANEL_PORT не меняли:
+curl -I http://127.0.0.1:2053
 ```
+Если вы меняли `PANEL_PORT` в `.env` — подставьте ваш порт.
 
 **Должно вернуть:**
 ```
@@ -383,8 +386,15 @@ ufw status
 # Проверить что контейнер запущен
 docker compose ps
 
-# Проверить с сервера
-curl -I http://localhost:2053
+# Проверить с сервера (внешний порт на host; если PANEL_PORT не меняли — 2053)
+curl -I http://127.0.0.1:2053
+
+# Если вы меняли порт панели ВНУТРИ UI (Settings → Panel Settings) и потеряли доступ,
+# посмотрите порт в логах и временно пробросьте его через .env (пример ниже):
+# docker compose logs --tail=200 | grep -E "Web server running HTTP"
+# PANEL_CONTAINER_PORT=<порт_из_логов>
+# PANEL_PORT=<тот же порт или любой внешний>
+# docker compose up -d
 ```
 
 ### Проблема: Нет интернета на клиенте
