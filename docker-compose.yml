@@ -7,19 +7,24 @@ services:
     container_name: erik-vpn
     restart: unless-stopped
 
+    # Кастомный entrypoint для применения настроек из переменных окружения
+    # (стандартный образ 3X-UI НЕ поддерживает XUI_USERNAME/XUI_PASSWORD/XUI_BASE_PATH)
+    entrypoint: ["/bin/sh", "/app/docker-init.sh"]
+
     environment:
       # Xray конфигурация
       - XRAY_VMESS_AEAD_FORCED=false
       - XRAY_VER=latest
 
-      # 3X-UI аутентификация
-      # Важно: не даём Compose тихо стартовать с дефолтами (admin/admin),
-      # если .env не подхватился или переменные не заданы.
+      # 3X-UI аутентификация (применяются нашим init скриптом)
       - XUI_USERNAME=${ADMIN_USERNAME:?set ADMIN_USERNAME in .env}
       - XUI_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
 
       # Базовый путь панели (для доступа по /air-erik-vpn/)
       - XUI_BASE_PATH=/air-erik-vpn/
+
+      # Fail2ban (единственная переменная которую образ поддерживает нативно)
+      - XUI_ENABLE_FAIL2BAN=true
 
     ports:
       # Панель управления 3X-UI
@@ -32,6 +37,9 @@ services:
       - "${VLESS_XHTTP_PORT:-8080}:8080"
 
     volumes:
+      # Кастомный init скрипт (применяет настройки из env)
+      - ./scripts/docker-init.sh:/app/docker-init.sh:ro
+
       # Данные 3X-UI (конфигурации, пользователи)
       - ./data/3x-ui:/etc/x-ui
 
