@@ -18,9 +18,12 @@ services:
       - XUI_USERNAME=${ADMIN_USERNAME:?set ADMIN_USERNAME in .env}
       - XUI_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
 
+      # Базовый путь панели (для доступа по /air-erik-vpn/)
+      - XUI_BASE_PATH=/air-erik-vpn/
+
     ports:
       # Панель управления 3X-UI
-      - "${PANEL_PORT:-2053}:2053"
+      - "${PANEL_PORT:-37428}:2053"
 
       # VLESS + Reality (основной протокол)
       - "${VLESS_REALITY_PORT:-443}:443"
@@ -46,7 +49,7 @@ services:
 
     # Проверка здоровья контейнера
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2053"]
+      test: ["CMD", "curl", "-f", "http://localhost:2053/air-erik-vpn/"]
       interval: 60s
       timeout: 10s
       retries: 3
